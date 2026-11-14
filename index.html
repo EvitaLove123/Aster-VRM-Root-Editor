@@ -45,10 +45,18 @@
  <div class="status" id="exportStatus">No export yet.</div>
 </section>
 </main>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
 <script type="module">
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js';
-import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/controls/OrbitControls.js';
-import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/loaders/GLTFLoader.js';
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin } from 'https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.2.0/lib/three-vrm.module.js';
 
 const $=id=>document.getElementById(id);
@@ -82,7 +90,7 @@ async function loadFile(file){
  const roots=detectRoots(state.json);state.modelRoots=roots.model;state.boneRoots=roots.bone;state.modelIndex=roots.model[0]??null;state.boneIndex=roots.bone[0]??null;
  fillSelect($('rootModelSelect'),roots.model,state.modelIndex);fillSelect($('rootBoneSelect'),roots.bone,state.boneIndex);
  if(!roots.model.length)status('No scene root nodes found. Preview may still load; root editing is unavailable.','bad');
- const url=URL.createObjectURL(new Blob([buf],{type:'model/gltf-binary'}));const gltf=await loader.loadAsync(url);URL.revokeObjectURL(url);state.gltf=gltf;mountPreview(gltf.scene);
+ const url=URL.createObjectURL(new Blob([buf],{type:'model/gltf-binary'}));let gltf;try{gltf=await loader.loadAsync(url);}catch(vrmError){console.warn('VRM plugin preview failed; retrying as standard GLB',vrmError);const fallbackLoader=new GLTFLoader();gltf=await fallbackLoader.loadAsync(url);}finally{URL.revokeObjectURL(url);}state.gltf=gltf;mountPreview(gltf.scene);
  $('modelLabel').textContent=file.name;$('resetView').disabled=false;$('resetTransform').disabled=false;$('centerModel').disabled=!roots.model.length;$('exportBtn').disabled=false;$('revertBtn').disabled=false;
  $('rootModelSelect').onchange=()=>{state.modelIndex=Number($('rootModelSelect').value);if(state.target==='model')refreshFields();};
  $('rootBoneSelect').onchange=()=>{state.boneIndex=Number($('rootBoneSelect').value);if(state.target==='bone')refreshFields();};
