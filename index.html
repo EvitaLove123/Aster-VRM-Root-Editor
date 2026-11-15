@@ -30,7 +30,7 @@
 </section>
 <section class="panel" id="boneGroupPanel">
  <div class="row"><h2>Bone Multi-Select</h2><span class="hint" id="boneCount">0 selected</span></div>
- <p class="hint">Choose several bones together — for example twin tails, both ears, or the tail. Group edits use offsets so each bone keeps its own starting position.</p>
+ <p class="hint">Choose several bones or rig nodes together — including VRM humanoid, spring bones, and custom-named transforms. Group edits use offsets so each node keeps its own starting position.</p>
  <input id="boneSearch" type="search" placeholder="Search bones: hair, ear, tail…">
  <div class="actions" style="margin:9px 0"><button class="btn" id="selectAllBones" disabled>Select all detected</button><button class="btn" id="clearBones" disabled>Clear selection</button></div>
  <div id="boneList" style="display:grid;gap:6px;max-height:230px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px"><span class="hint">Load a model to detect bones.</span></div>
@@ -97,14 +97,24 @@ function detectRoots(json){
  return {model,bone:[...new Set(bone)],parents};
 }
 function detectBoneNodes(json){
- const nodes=json.nodes||[],found=new Set();
- (json.skins||[]).forEach(s=>(s.joints||[]).forEach(i=>{if(Number.isInteger(i)&&nodes[i])found.add(i);}));
- const ext=json.extensions||{},spring=ext.VRMC_springBone;
- (spring?.springs||[]).forEach(s=>(s.joints||[]).forEach(j=>{if(Number.isInteger(j.node)&&nodes[j.node])found.add(j.node);}));
- const legacy=ext.VRM?.secondaryAnimation;
- (legacy?.boneGroups||[]).forEach(g=>(g.bones||[]).forEach(i=>{if(Number.isInteger(i)&&nodes[i])found.add(i);}));
- const boneName=/(^|[_ .-])(bone|jnt|joint)([_ .-]|$)|hair|ear|tail|ponytail|side.?tail|mimi|shippo|髪|耳|尻尾/i;
- nodes.forEach((n,i)=>{if(n.name&&boneName.test(n.name)&&!Number.isInteger(n.mesh))found.add(i);});
+ const nodes=json.nodes||[],found=new Set(),scene=json.scenes?.[json.scene||0]||json.scenes?.[0]||{nodes:[]},sceneRoots=new Set(scene.nodes||[]);
+ const add=i=>{if(Number.isInteger(i)&&i>=0&&i<nodes.length&&nodes[i]&&!Number.isInteger(nodes[i].mesh))found.add(i);};
+ // Standard glTF skin joints.
+ (json.skins||[]).forEach(s=>(s.joints||[]).forEach(add));
+ // VRM 1.0 humanoid bones and spring bones.
+ const ext=json.extensions||{},vrmc=ext.VRMC_vrm?.humanoid?.humanBones||{};
+ Object.values(vrmc).forEach(v=>add(v?.node));
+ (ext.VRMC_springBone?.springs||[]).forEach(s=>(s.joints||[]).forEach(j=>add(j?.node)));
+ // VRM 0.x humanoid and secondary animation references.
+ const legacy=ext.VRM||{},legacyBones=legacy.humanoid?.humanBones||{};
+ Object.values(legacyBones).forEach(v=>add(v?.node));
+ (legacy.secondaryAnimation?.boneGroups||[]).forEach(g=>(g.bones||[]).forEach(add));
+ // Catch common MMD, Mixamo, Blender and custom hair/ear/tail bone naming.
+ const boneName=/(bone|jnt|joint|mixamorig|bip\d*|j_bip|def[-_]|armature|hair|ear|tail|ponytail|side.?tail|mimi|shippo|髪|耳|尻尾)/i;
+ nodes.forEach((n,i)=>{if(!Number.isInteger(n.mesh)&&n.name&&boneName.test(n.name))add(i);});
+ // Fallback: expose unnamed/unusually named rig transforms too. Mesh nodes and scene roots stay excluded.
+ // This intentionally favors discoverability; users can search and select only the intended rig nodes.
+ nodes.forEach((n,i)=>{if(!Number.isInteger(n.mesh)&&!sceneRoots.has(i)&&Array.isArray(n.children)&&n.children.length>0)add(i);});
  return [...found].sort((a,b)=>a-b);
 }
 function nodeLabel(i){const n=state.json.nodes[i];return (n.name||'Node '+i)+'  [#'+i+']';}
