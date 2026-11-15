@@ -99,31 +99,34 @@ async function loadFile(file){
  }catch(e){console.error(e);status('Load failed: '+e.message,'bad');}
 }
 function mountPreview(object){
- const host=$('preview');host.innerHTML='';const w=host.clientWidth,h=host.clientHeight;
+ if(state.raf)cancelAnimationFrame(state.raf);if(state.renderer){state.renderer.dispose();state.renderer.forceContextLoss();}if(state.resizeHandler)window.removeEventListener('resize',state.resizeHandler);
+ const host=$('preview');host.innerHTML='';const w=Math.max(1,host.clientWidth),h=Math.max(1,host.clientHeight);
  const scene=new THREE.Scene();scene.background=new THREE.Color(0xeaf0f8);scene.add(object);scene.add(new THREE.HemisphereLight(0xffffff,0x8995aa,2));
  const light=new THREE.DirectionalLight(0xffffff,2);light.position.set(3,5,4);scene.add(light);
- const camera=new THREE.PerspectiveCamera(35,w/h,.01,1000);camera.position.set(0,1.4,3.5);
+ const camera=new THREE.PerspectiveCamera(35,w/h,.001,10000);
  const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});renderer.setPixelRatio(Math.min(devicePixelRatio,1.6));renderer.setSize(w,h);renderer.outputColorSpace=THREE.SRGBColorSpace;host.append(renderer.domElement);
- const controls=new OrbitControls(camera,renderer.domElement);controls.target.set(0,1,0);controls.update();
+ const controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=true;
+ const bounds=new THREE.Box3().setFromObject(object);if(!bounds.isEmpty()){const center=bounds.getCenter(new THREE.Vector3()),sphere=bounds.getBoundingSphere(new THREE.Sphere()),radius=Math.max(sphere.radius,.05),distance=radius/Math.sin(THREE.MathUtils.degToRad(camera.fov/2))*1.25;controls.target.copy(center);camera.position.copy(center).add(new THREE.Vector3(distance*.12,radius*.18,distance));camera.near=Math.max(radius/1000,.001);camera.far=Math.max(distance+radius*20,100);camera.updateProjectionMatrix();}else{controls.target.set(0,1,0);camera.position.set(0,1.4,3.5);}controls.update();
  state.scene=scene;state.renderer=renderer;state.camera=camera;state.controls=controls;
- const tick=()=>{if(!state.renderer)return;requestAnimationFrame(tick);controls.update();renderer.render(scene,camera);};tick();
+ const resize=()=>{const nw=Math.max(1,host.clientWidth),nh=Math.max(1,host.clientHeight);camera.aspect=nw/nh;camera.updateProjectionMatrix();renderer.setSize(nw,nh);};state.resizeHandler=resize;window.addEventListener('resize',resize);
+ const tick=()=>{state.raf=requestAnimationFrame(tick);controls.update();renderer.render(scene,camera);};tick();
 }
 function activeIndex(){return state.target==='model'?state.modelIndex:state.boneIndex;}
-function readTransform(index){const n=state.json.nodes[index]||{};const p=n.translation||[0,0,0],s=n.scale||[1,1,1],q=n.rotation||[0,0,0,1];const e=new THREE.Euler().setFromQuaternion(new THREE.Quaternion(q[0],q[1],q[2],q[3]),'XYZ');return {p:[...p],r:[THREE.MathUtils.radToDeg(e.x),THREE.MathUtils.radToDeg(e.y),THREE.MathUtils.radToDeg(e.z)],s:[...s]};}
+function readTransform(index){const n=state.json.nodes[index]||{};let p=n.translation||[0,0,0],s=n.scale||[1,1,1],q=n.rotation||[0,0,0,1];if(n.matrix&&n.matrix.length===16){const m=new THREE.Matrix4().fromArray(n.matrix),pos=new THREE.Vector3(),quat=new THREE.Quaternion(),scale=new THREE.Vector3();m.decompose(pos,quat,scale);p=pos.toArray();s=scale.toArray();q=quat.toArray();}const e=new THREE.Euler().setFromQuaternion(new THREE.Quaternion(q[0],q[1],q[2],q[3]),'XYZ');return {p:[...p],r:[THREE.MathUtils.radToDeg(e.x),THREE.MathUtils.radToDeg(e.y),THREE.MathUtils.radToDeg(e.z)],s:[...s]};}
 function makeFields(id,labels,vals,kind){const el=$(id);el.innerHTML='';labels.forEach((axis,i)=>{const wrap=document.createElement('div');wrap.className='field';const lab=document.createElement('label');lab.textContent=axis;const input=document.createElement('input');input.type='number';input.step=kind==='s'?'0.01':kind==='r'?'1':'0.01';input.value=Number(vals[i].toFixed(4));input.dataset.axis=i;input.addEventListener('change',()=>applyField(kind,i,Number(input.value)));wrap.append(lab,input);el.append(wrap);});}
 function refreshFields(){const i=activeIndex();$('targetLabel').textContent=i==null?'No target':nodeLabel(i);if(i==null){['positionFields','rotationFields','scaleFields'].forEach(id=>$(id).innerHTML='');return;}const t=readTransform(i);makeFields('positionFields',['X','Y','Z'],t.p,'p');makeFields('rotationFields',['X°','Y°','Z°'],t.r,'r');makeFields('scaleFields',['X','Y','Z'],t.s,'s');}
 function applyField(kind,axis,value){const i=activeIndex();if(i==null||!Number.isFinite(value))return;const n=state.json.nodes[i];const t=readTransform(i);if(kind==='p')t.p[axis]=value;if(kind==='s')t.s[axis]=value;if(kind==='r')t.r[axis]=value;
- n.translation=t.p;n.scale=t.s;const e=new THREE.Euler(THREE.MathUtils.degToRad(t.r[0]),THREE.MathUtils.degToRad(t.r[1]),THREE.MathUtils.degToRad(t.r[2]),'XYZ');const q=new THREE.Quaternion().setFromEuler(e);n.rotation=[q.x,q.y,q.z,q.w];
+ delete n.matrix;n.translation=t.p;n.scale=t.s;const e=new THREE.Euler(THREE.MathUtils.degToRad(t.r[0]),THREE.MathUtils.degToRad(t.r[1]),THREE.MathUtils.degToRad(t.r[2]),'XYZ');const q=new THREE.Quaternion().setFromEuler(e);n.rotation=[q.x,q.y,q.z,q.w];
  const obj=getNodeObj(i);if(obj){obj.position.fromArray(n.translation);obj.scale.fromArray(n.scale);obj.quaternion.fromArray(n.rotation);}
  state.dirty=true;status('Transform updated in editor. Export to save changes.','good');
 }
 document.querySelectorAll('[data-target]').forEach(b=>b.addEventListener('click',()=>{state.target=b.dataset.target;document.querySelectorAll('[data-target]').forEach(x=>x.classList.toggle('active',x===b));refreshFields();}));
 $('fileInput').addEventListener('change',e=>{const f=e.target.files?.[0];if(f)loadFile(f);});
-$('resetTransform').onclick=()=>{const i=activeIndex();if(i==null)return;const n=state.json.nodes[i];delete n.translation;delete n.rotation;delete n.scale;const obj=getNodeObj(i);if(obj){obj.position.set(0,0,0);obj.quaternion.identity();obj.scale.set(1,1,1);}state.dirty=true;refreshFields();status('Selected node transform reset.','good');};
+$('resetTransform').onclick=()=>{const i=activeIndex();if(i==null)return;const n=state.json.nodes[i];delete n.matrix;delete n.translation;delete n.rotation;delete n.scale;const obj=getNodeObj(i);if(obj){obj.position.set(0,0,0);obj.quaternion.identity();obj.scale.set(1,1,1);}state.dirty=true;refreshFields();status('Selected node transform reset.','good');};
 $('centerModel').onclick=()=>{if(state.modelIndex==null)return;const i=state.modelIndex,n=state.json.nodes[i];n.translation=[0,0,0];const obj=getNodeObj(i);if(obj)obj.position.set(0,0,0);state.dirty=true;refreshFields();status('RootModel translation set to 0,0,0.','good');};
-$('resetView').onclick=()=>{if(state.camera){state.camera.position.set(0,1.4,3.5);state.controls.target.set(0,1,0);state.controls.update();}};
+$('resetView').onclick=()=>{if(state.camera&&state.gltf?.scene){const box=new THREE.Box3().setFromObject(state.gltf.scene),sphere=box.getBoundingSphere(new THREE.Sphere()),center=box.getCenter(new THREE.Vector3()),radius=Math.max(sphere.radius,.05),distance=radius/Math.sin(THREE.MathUtils.degToRad(state.camera.fov/2))*1.25;state.controls.target.copy(center);state.camera.position.copy(center).add(new THREE.Vector3(distance*.12,radius*.18,distance));state.camera.near=Math.max(radius/1000,.001);state.camera.far=Math.max(distance+radius*20,100);state.camera.updateProjectionMatrix();state.controls.update();}};
 $('revertBtn').onclick=()=>{if(!state.original)return;state.json=structuredClone(state.original);state.dirty=false;refreshFields();status('JSON edits discarded. Reload the model to fully reset the preview.');};
 $('exportBtn').onclick=()=>{try{if(!state.json||!state.chunks)throw Error('Load a VRM first.');const out=encodeGLB(state.json,state.chunks);const url=URL.createObjectURL(new Blob([out],{type:'model/gltf-binary'}));const a=document.createElement('a');a.href=url;a.download='Aster-Root-Edited.vrm';a.click();setTimeout(()=>URL.revokeObjectURL(url),1500);$('exportStatus').textContent='Exported. Re-open the file in a VRM viewer and test it in your target app.';status('Export complete.','good');}catch(e){$('exportStatus').textContent='Export failed: '+e.message;status(e.message,'bad');}};
-window.addEventListener('beforeunload',()=>{if(state.renderer)state.renderer.dispose();});
+window.addEventListener('beforeunload',()=>{if(state.raf)cancelAnimationFrame(state.raf);if(state.renderer)state.renderer.dispose();if(state.resizeHandler)window.removeEventListener('resize',state.resizeHandler);});
 </script>
 </body></html>
