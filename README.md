@@ -2,11 +2,14 @@
 
 Android-first, browser-side editor for VRM 0.x / VRM 1.0 GLB containers.
 
-## V1 features
-- Load VRM/GLB and preview it with Three.js + `@pixiv/three-vrm`.
+## V1.2 features
+- Load VRM/GLB and preview it with Three.js + `@pixiv/three-vrm` (with a standard GLB preview fallback).
+- Auto-frame the model using its 3D bounds; resize-aware preview and touch-friendly OrbitControls.
 - Detect scene-level RootModel candidates.
 - Detect top-level skeleton joint candidates from glTF skin joint hierarchies.
 - Edit Position, Rotation (degrees), and Scale independently for RootModel and Root Bone.
+- Read glTF nodes stored as either TRS or a 4×4 matrix; edited nodes are written back as TRS.
+- Reset the selected node, center the selected RootModel translation, or discard all edits and restore the original preview.
 - Export by patching the GLB JSON chunk while preserving the original BIN and other chunks.
 
 ## Enable GitHub Pages
