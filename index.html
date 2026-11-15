@@ -60,7 +60,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin } from 'https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.2.0/lib/three-vrm.module.js';
 
 const $=id=>document.getElementById(id);
-const state={buffer:null,bytes:null,json:null,chunks:[],gltf:null,scene:null,renderer:null,camera:null,controls:null,modelRoots:[],boneRoots:[],modelIndex:null,boneIndex:null,target:'model',original:null,dirty:false};
+const state={buffer:null,bytes:null,json:null,chunks:[],gltf:null,scene:null,renderer:null,camera:null,controls:null,modelRoots:[],boneRoots:[],modelIndex:null,boneIndex:null,target:'model',original:null,dirty:false,raf:0,resizeHandler:null};
 const loader=new GLTFLoader(); loader.register(parser=>new VRMLoaderPlugin(parser));
 function status(msg,kind=''){ $('status').textContent=msg; $('status').className='status '+kind; }
 function parseGLB(buffer){
