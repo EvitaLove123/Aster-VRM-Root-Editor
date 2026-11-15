@@ -28,6 +28,20 @@
  <p class="nodeinfo" id="nodeInfo">RootModel is the scene-level object. Root Bone is detected from the skin joint hierarchy. They are edited independently.</p>
  <div class="warning" style="margin-top:10px">Changing a skeleton root can affect skinning and animation. Make a backup and validate the exported VRM in your target app.</div>
 </section>
+<section class="panel" id="boneGroupPanel">
+ <div class="row"><h2>Bone Multi-Select</h2><span class="hint" id="boneCount">0 selected</span></div>
+ <p class="hint">Choose several bones together — for example twin tails, both ears, or the tail. Group edits use offsets so each bone keeps its own starting position.</p>
+ <input id="boneSearch" type="search" placeholder="Search bones: hair, ear, tail…">
+ <div class="actions" style="margin:9px 0"><button class="btn" id="selectAllBones" disabled>Select all detected</button><button class="btn" id="clearBones" disabled>Clear selection</button></div>
+ <div id="boneList" style="display:grid;gap:6px;max-height:230px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px"><span class="hint">Load a model to detect bones.</span></div>
+ <div style="display:grid;gap:10px;margin-top:12px">
+  <div><div class="row"><strong>Position offset</strong><span class="hint">Add to current position</span></div><div class="grid"><div class="field"><label>X</label><input id="multiPosX" type="number" step="0.01" value="0"></div><div class="field"><label>Y</label><input id="multiPosY" type="number" step="0.01" value="0"></div><div class="field"><label>Z</label><input id="multiPosZ" type="number" step="0.01" value="0"></div></div></div>
+  <div><div class="row"><strong>Rotation offset</strong><span class="hint">Degrees · add</span></div><div class="grid"><div class="field"><label>X°</label><input id="multiRotX" type="number" step="1" value="0"></div><div class="field"><label>Y°</label><input id="multiRotY" type="number" step="1" value="0"></div><div class="field"><label>Z°</label><input id="multiRotZ" type="number" step="1" value="0"></div></div></div>
+  <div><div class="row"><strong>Scale multiplier</strong><span class="hint">1 = unchanged</span></div><div class="grid"><div class="field"><label>X</label><input id="multiScaleX" type="number" step="0.01" value="1"></div><div class="field"><label>Y</label><input id="multiScaleY" type="number" step="0.01" value="1"></div><div class="field"><label>Z</label><input id="multiScaleZ" type="number" step="0.01" value="1"></div></div></div>
+  <button class="btn primary" id="applyBoneGroup" disabled>Apply to selected bones</button>
+ </div>
+ <div class="warning" style="margin-top:10px">Spring bones and hair/ear/tail rigs may behave differently between models. Make a backup and test the exported VRM in a viewer.</div>
+</section>
 <section class="panel">
  <div class="row"><h2>Transform Editor</h2><span class="hint" id="targetLabel">No target</span></div>
  <div class="tabs"><button class="btn active" data-target="model">RootModel</button><button class="btn" data-target="bone">Root Bone</button></div>
@@ -60,7 +74,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin } from 'https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.2.0/lib/three-vrm.module.js';
 
 const $=id=>document.getElementById(id);
-const state={buffer:null,bytes:null,json:null,chunks:[],gltf:null,scene:null,renderer:null,camera:null,controls:null,modelRoots:[],boneRoots:[],modelIndex:null,boneIndex:null,target:'model',original:null,dirty:false,raf:0,resizeHandler:null};
+const state={buffer:null,bytes:null,json:null,chunks:[],gltf:null,scene:null,renderer:null,camera:null,controls:null,modelRoots:[],boneRoots:[],modelIndex:null,boneIndex:null,target:'model',original:null,dirty:false,raf:0,resizeHandler:null,boneCandidates:[],selectedBones:[]};
 const loader=new GLTFLoader(); loader.register(parser=>new VRMLoaderPlugin(parser));
 function status(msg,kind=''){ $('status').textContent=msg; $('status').className='status '+kind; }
 function parseGLB(buffer){
@@ -82,12 +96,42 @@ function detectRoots(json){
  const bone=[...joints].filter(i=>{let p=parents[i];while(p>=0){if(joints.has(p))return false;p=parents[p];}return true;});
  return {model,bone:[...new Set(bone)],parents};
 }
+function detectBoneNodes(json){
+ const nodes=json.nodes||[],found=new Set();
+ (json.skins||[]).forEach(s=>(s.joints||[]).forEach(i=>{if(Number.isInteger(i)&&nodes[i])found.add(i);}));
+ const ext=json.extensions||{},spring=ext.VRMC_springBone;
+ (spring?.springs||[]).forEach(s=>(s.joints||[]).forEach(j=>{if(Number.isInteger(j.node)&&nodes[j.node])found.add(j.node);}));
+ const legacy=ext.VRM?.secondaryAnimation;
+ (legacy?.boneGroups||[]).forEach(g=>(g.bones||[]).forEach(i=>{if(Number.isInteger(i)&&nodes[i])found.add(i);}));
+ const boneName=/(^|[_ .-])(bone|jnt|joint)([_ .-]|$)|hair|ear|tail|ponytail|side.?tail|mimi|shippo|髪|耳|尻尾/i;
+ nodes.forEach((n,i)=>{if(n.name&&boneName.test(n.name)&&!Number.isInteger(n.mesh))found.add(i);});
+ return [...found].sort((a,b)=>a-b);
+}
 function nodeLabel(i){const n=state.json.nodes[i];return (n.name||'Node '+i)+'  [#'+i+']';}
+function renderBoneList(){
+ const list=$('boneList'),term=$('boneSearch').value.trim().toLowerCase();list.innerHTML='';
+ const shown=state.boneCandidates.filter(i=>!term||nodeLabel(i).toLowerCase().includes(term));
+ if(!shown.length){const empty=document.createElement('span');empty.className='hint';empty.textContent=state.boneCandidates.length?'No bones match this search.':'No bone candidates detected in this model.';list.append(empty);}
+ shown.forEach(i=>{const label=document.createElement('label');label.style.cssText='display:flex;align-items:center;gap:9px;padding:6px 4px;min-height:36px;overflow-wrap:anywhere';const cb=document.createElement('input');cb.type='checkbox';cb.style.cssText='width:18px;height:18px;flex:0 0 18px';cb.checked=state.selectedBones.includes(i);cb.addEventListener('change',()=>{if(cb.checked){if(!state.selectedBones.includes(i))state.selectedBones.push(i);}else state.selectedBones=state.selectedBones.filter(x=>x!==i);updateBoneCount();});const name=document.createElement('span');name.textContent=nodeLabel(i);name.style.fontSize='13px';label.append(cb,name);list.append(label);});
+ updateBoneCount();
+}
+function updateBoneCount(){$('boneCount').textContent=state.selectedBones.length+' / '+state.boneCandidates.length+' selected';$('selectAllBones').disabled=!state.boneCandidates.length;$('clearBones').disabled=!state.selectedBones.length;$('applyBoneGroup').disabled=!state.selectedBones.length;}
+function setNodeTransform(index,t){
+ const n=state.json.nodes[index];delete n.matrix;n.translation=t.p;n.scale=t.s;
+ const e=new THREE.Euler(THREE.MathUtils.degToRad(t.r[0]),THREE.MathUtils.degToRad(t.r[1]),THREE.MathUtils.degToRad(t.r[2]),'XYZ'),q=new THREE.Quaternion().setFromEuler(e);n.rotation=[q.x,q.y,q.z,q.w];
+ const obj=getNodeObj(index);if(obj){obj.position.fromArray(n.translation);obj.scale.fromArray(n.scale);obj.quaternion.fromArray(n.rotation);}
+}
+function applyBoneGroup(){
+ if(!state.selectedBones.length)return;
+ const p=[0,1,2].map(i=>Number($('multiPos'+'XYZ'[i]).value)||0),r=[0,1,2].map(i=>Number($('multiRot'+'XYZ'[i]).value)||0),s=[0,1,2].map(i=>Number($('multiScale'+'XYZ'[i]).value)||1));
+ state.selectedBones.forEach(i=>{const t=readTransform(i);t.p=t.p.map((v,a)=>v+p[a]);t.r=t.r.map((v,a)=>v+r[a]);t.s=t.s.map((v,a)=>v*s[a]);setNodeTransform(i,t);});
+ state.dirty=true;status('Applied group offsets to '+state.selectedBones.length+' selected bones. Export to save changes.','good');
+}
 function fillSelect(el,items,chosen){el.innerHTML='';items.forEach(i=>{const o=document.createElement('option');o.value=i;o.textContent=nodeLabel(i);el.append(o);});el.disabled=!items.length;if(items.length)el.value=String(chosen??items[0]);else{const o=document.createElement('option');o.textContent='No matching node detected';el.append(o);}}
 function getNodeObj(index){if(index==null||!state.gltf)return null;try{return state.gltf.parser.associations && [...state.gltf.parser.associations.entries()].find(([obj,a])=>a.nodes===index)?.[0] || null;}catch{return null;}}
 async function loadFile(file){
  try{status('Reading '+file.name+'…');const buf=await file.arrayBuffer();const parsed=parseGLB(buf);state.buffer=buf;state.bytes=new Uint8Array(buf);state.json=parsed.json;state.chunks=parsed.chunks;state.original=structuredClone(parsed.json);state.dirty=false;
- const roots=detectRoots(state.json);state.modelRoots=roots.model;state.boneRoots=roots.bone;state.modelIndex=roots.model[0]??null;state.boneIndex=roots.bone[0]??null;
+ const roots=detectRoots(state.json);state.modelRoots=roots.model;state.boneRoots=roots.bone;state.modelIndex=roots.model[0]??null;state.boneIndex=roots.bone[0]??null;state.boneCandidates=detectBoneNodes(state.json);state.selectedBones=[];renderBoneList();
  fillSelect($('rootModelSelect'),roots.model,state.modelIndex);fillSelect($('rootBoneSelect'),roots.bone,state.boneIndex);
  if(!roots.model.length)status('No scene root nodes found. Preview may still load; root editing is unavailable.','bad');
  const url=URL.createObjectURL(new Blob([buf],{type:'model/gltf-binary'}));let gltf;try{gltf=await loader.loadAsync(url);}catch(vrmError){console.warn('VRM plugin preview failed; retrying as standard GLB',vrmError);const fallbackLoader=new GLTFLoader();gltf=await fallbackLoader.loadAsync(url);}finally{URL.revokeObjectURL(url);}state.gltf=gltf;mountPreview(gltf.scene);
@@ -122,6 +166,10 @@ function applyField(kind,axis,value){const i=activeIndex();if(i==null||!Number.i
 }
 document.querySelectorAll('[data-target]').forEach(b=>b.addEventListener('click',()=>{state.target=b.dataset.target;document.querySelectorAll('[data-target]').forEach(x=>x.classList.toggle('active',x===b));refreshFields();}));
 $('fileInput').addEventListener('change',e=>{const f=e.target.files?.[0];if(f)loadFile(f);});
+$('boneSearch').addEventListener('input',renderBoneList);
+$('selectAllBones').addEventListener('click',()=>{state.selectedBones=[...state.boneCandidates];renderBoneList();});
+$('clearBones').addEventListener('click',()=>{state.selectedBones=[];renderBoneList();});
+$('applyBoneGroup').addEventListener('click',applyBoneGroup);
 $('resetTransform').onclick=()=>{const i=activeIndex();if(i==null)return;const n=state.json.nodes[i];delete n.matrix;delete n.translation;delete n.rotation;delete n.scale;const obj=getNodeObj(i);if(obj){obj.position.set(0,0,0);obj.quaternion.identity();obj.scale.set(1,1,1);}state.dirty=true;refreshFields();status('Selected node transform reset.','good');};
 $('centerModel').onclick=()=>{if(state.modelIndex==null)return;const i=state.modelIndex,n=state.json.nodes[i];delete n.matrix;n.translation=[0,0,0];const obj=getNodeObj(i);if(obj)obj.position.set(0,0,0);state.dirty=true;refreshFields();status('RootModel translation set to 0,0,0.','good');};
 $('resetView').onclick=()=>{if(state.camera&&state.gltf?.scene){const box=new THREE.Box3().setFromObject(state.gltf.scene),sphere=box.getBoundingSphere(new THREE.Sphere()),center=box.getCenter(new THREE.Vector3()),radius=Math.max(sphere.radius,.05),distance=radius/Math.sin(THREE.MathUtils.degToRad(state.camera.fov/2))*1.25;state.controls.target.copy(center);state.camera.position.copy(center).add(new THREE.Vector3(distance*.12,radius*.18,distance));state.camera.near=Math.max(radius/1000,.001);state.camera.far=Math.max(distance+radius*20,100);state.camera.updateProjectionMatrix();state.controls.update();}};
